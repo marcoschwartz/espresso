@@ -44,22 +44,37 @@ func callArrow(id int, args []*Value, callerScope map[string]*Value) *Value {
 	}
 
 	// Fast path: simple expression arrows (n => n * 2) — reuse caller scope
-	// instead of allocating a new map. We save+restore the param values.
 	if !af.isBlock && len(af.params) <= 2 && len(af.scope) == 0 {
-		// Save old values, set params
-		saved := make([]*Value, len(af.params))
+		saved := make([]*Value, 0, 8)
+		var savedNames []string
 		for i, name := range af.params {
-			saved[i] = callerScope[name]
-			if i < len(args) {
-				callerScope[name] = args[i]
+			if strings.HasPrefix(name, "__destructure__:") {
+				// Array destructuring: spread array into named vars
+				dnames := strings.Split(name[len("__destructure__:"):], ",")
+				var arr *Value
+				if i < len(args) { arr = args[i] }
+				for j, dn := range dnames {
+					savedNames = append(savedNames, dn)
+					saved = append(saved, callerScope[dn])
+					if arr != nil && arr.typ == TypeArray && j < len(arr.array) {
+						callerScope[dn] = arr.array[j]
+					} else {
+						callerScope[dn] = Undefined
+					}
+				}
 			} else {
-				callerScope[name] = Undefined
+				savedNames = append(savedNames, name)
+				saved = append(saved, callerScope[name])
+				if i < len(args) {
+					callerScope[name] = args[i]
+				} else {
+					callerScope[name] = Undefined
+				}
 			}
 		}
 		ev := &evaluator{tokens: af.tokens, pos: 0, scope: callerScope}
 		result := ev.expr()
-		// Restore
-		for i, name := range af.params {
+		for i, name := range savedNames {
 			if saved[i] != nil {
 				callerScope[name] = saved[i]
 			} else {
@@ -78,7 +93,18 @@ func callArrow(id int, args []*Value, callerScope map[string]*Value) *Value {
 		childScope[k] = v
 	}
 	for i, name := range af.params {
-		if i < len(args) {
+		if strings.HasPrefix(name, "__destructure__:") {
+			dnames := strings.Split(name[len("__destructure__:"):], ",")
+			var arr *Value
+			if i < len(args) { arr = args[i] }
+			for j, dn := range dnames {
+				if arr != nil && arr.typ == TypeArray && j < len(arr.array) {
+					childScope[dn] = arr.array[j]
+				} else {
+					childScope[dn] = Undefined
+				}
+			}
+		} else if i < len(args) {
 			childScope[name] = args[i]
 		} else {
 			childScope[name] = Undefined
