@@ -1511,20 +1511,47 @@ func (e *evaluator) evalMapFilter(val *Value, method string) *Value {
 	}
 	bodyTokens := append(rawBody, tok{t: tokEOF})
 
+	// Check for destructured first param: ([a, b, c]) => ...
+	isDestructured := len(params) > 0 && strings.HasPrefix(params[0], "__destructure__:")
+	var destructNames []string
+	if isDestructured {
+		destructNames = strings.Split(params[0][len("__destructure__:"):], ",")
+	}
+
 	// For simple expression bodies, reuse scope and evaluator
 	if isExprBody && len(params) <= 2 {
 		results := make([]*Value, 0, len(val.array))
 		ev := &evaluator{tokens: bodyTokens, pos: 0, scope: e.scope}
+
 		// Save original param values
-		saved0, has0 := e.scope[params[0]]
-		var saved1 *Value
-		var has1 bool
+		var savedVars []struct{ name string; val *Value; has bool }
+		if isDestructured {
+			for _, name := range destructNames {
+				v, ok := e.scope[name]
+				savedVars = append(savedVars, struct{ name string; val *Value; has bool }{name, v, ok})
+			}
+		} else {
+			v, ok := e.scope[params[0]]
+			savedVars = append(savedVars, struct{ name string; val *Value; has bool }{params[0], v, ok})
+		}
 		if len(params) > 1 {
-			saved1, has1 = e.scope[params[1]]
+			v, ok := e.scope[params[1]]
+			savedVars = append(savedVars, struct{ name string; val *Value; has bool }{params[1], v, ok})
 		}
 
 		for i, item := range val.array {
-			e.scope[params[0]] = item
+			if isDestructured {
+				// Spread array item into named vars
+				for j, name := range destructNames {
+					if item.typ == TypeArray && j < len(item.array) {
+						e.scope[name] = item.array[j]
+					} else {
+						e.scope[name] = Undefined
+					}
+				}
+			} else {
+				e.scope[params[0]] = item
+			}
 			if len(params) > 1 {
 				e.scope[params[1]] = internNum(float64(i))
 			}
@@ -1541,16 +1568,11 @@ func (e *evaluator) evalMapFilter(val *Value, method string) *Value {
 		}
 
 		// Restore
-		if has0 {
-			e.scope[params[0]] = saved0
-		} else {
-			delete(e.scope, params[0])
-		}
-		if len(params) > 1 {
-			if has1 {
-				e.scope[params[1]] = saved1
+		for _, sv := range savedVars {
+			if sv.has {
+				e.scope[sv.name] = sv.val
 			} else {
-				delete(e.scope, params[1])
+				delete(e.scope, sv.name)
 			}
 		}
 		return newArr(results)
@@ -1887,11 +1909,30 @@ func (e *evaluator) parseArrowParams() []string {
 		for e.peek().t != tokRParen && e.peek().t != tokEOF {
 			if e.peek().t == tokIdent {
 				params = append(params, e.advance().v)
+			} else if e.peek().t == tokLBrack {
+				// Array destructuring: ([a, b, c]) => ...
+				// Store as a special "__destructure__:a,b,c" param
+				e.advance() // skip [
+				var names []string
+				for e.peek().t != tokRBrack && e.peek().t != tokEOF {
+					if e.peek().t == tokIdent {
+						names = append(names, e.advance().v)
+					}
+					if e.peek().t == tokComma {
+						e.advance()
+					}
+				}
+				if e.peek().t == tokRBrack {
+					e.advance()
+				}
+				params = append(params, "__destructure__:"+strings.Join(names, ","))
+			} else {
+				e.advance() // skip unknown token
 			}
 			// skip default values like = 0
 			if e.peek().t == tokAssign {
 				e.advance()
-				e.expr() // skip default value
+				e.expr()
 			}
 			if e.peek().t == tokComma {
 				e.advance()
