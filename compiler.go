@@ -11,6 +11,9 @@ import (
 // compileTokens compiles pre-tokenized JS code into a compiledPage.
 // Returns nil if compilation fails (caller falls back to interpreted eval).
 func compileTokens(tokens []tok) *compiledPage {
+	if needsInterpreter(tokens) {
+		return nil
+	}
 	c := &compiler{tokens: tokens, pos: 0}
 	defer func() {
 		if r := recover(); r != nil {

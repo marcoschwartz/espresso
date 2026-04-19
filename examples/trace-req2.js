@@ -1,0 +1,12 @@
+process.stdout.write("1\n");
+var proto = require('./node_modules/express/lib/application.js');
+process.stdout.write("2 application typeof: " + typeof proto + "\n");
+var req = require('./node_modules/express/lib/request.js');
+process.stdout.write("3 request typeof: " + typeof req + "\n");
+var res = require('./node_modules/express/lib/response.js');
+process.stdout.write("4 response typeof: " + typeof res + "\n");
+var ss = require('serve-static');
+process.stdout.write("5 serve-static typeof: " + typeof ss + "\n");
+process.stdout.write("6 now loading express itself...\n");
+var express = require('express');
+process.stdout.write("7 express typeof: " + typeof express + "\n");

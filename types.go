@@ -28,6 +28,12 @@ const (
 // NativeFunc is a Go function callable from JS.
 type NativeFunc func(args []*Value) *Value
 
+// PropDescriptor holds a getter/setter pair for a property.
+type PropDescriptor struct {
+	Get *Value // getter function
+	Set *Value // setter function
+}
+
 // Value represents a JavaScript value.
 type Value struct {
 	typ      Type
@@ -36,9 +42,12 @@ type Value struct {
 	str      string
 	array    []*Value
 	object   map[string]*Value
+	getset   map[string]*PropDescriptor // getter/setter descriptors
+	proto    *Value                     // prototype chain
 	fnParams []string
 	fnBody   string
-	native   NativeFunc  // for Go-native functions
+	fnScope  map[string]*Value // captured scope for module-exported fnBody functions
+	native   NativeFunc        // for Go-native functions
 	Custom   interface{} // for embedding Go objects (e.g. SSR vnodes)
 	bc       *bytecode   // cached bytecode for function bodies
 }
@@ -49,6 +58,61 @@ var Undefined = &Value{typ: TypeUndefined}
 // Break and Continue are sentinel values for loop control flow.
 var breakSentinel = &Value{typ: TypeUndefined, str: "__break__"}
 var continueSentinel = &Value{typ: TypeUndefined, str: "__continue__"}
+
+// throwSentinel wraps a thrown value. The thrown value is stored in object["__thrown__"].
+func newThrow(val *Value) *Value {
+	return &Value{typ: TypeUndefined, str: "__throw__", object: map[string]*Value{"__thrown__": val}}
+}
+
+// isThrow checks if a value is a throw sentinel.
+func isThrow(v *Value) bool {
+	return v != nil && v.str == "__throw__" && v.object != nil
+}
+
+// thrownValue extracts the thrown value from a throw sentinel.
+func thrownValue(v *Value) *Value {
+	if v != nil && v.object != nil {
+		if tv, ok := v.object["__thrown__"]; ok {
+			return tv
+		}
+	}
+	return Undefined
+}
+
+// DefineGetter defines a getter on an object property (Go API for embedders).
+func (v *Value) DefineGetter(prop string, fn NativeFunc) {
+	if v.getset == nil {
+		v.getset = make(map[string]*PropDescriptor)
+	}
+	desc, ok := v.getset[prop]
+	if !ok {
+		desc = &PropDescriptor{}
+		v.getset[prop] = desc
+	}
+	desc.Get = NewNativeFunc(fn)
+}
+
+// DefineSetter defines a setter on an object property (Go API for embedders).
+func (v *Value) DefineSetter(prop string, fn NativeFunc) {
+	if v.getset == nil {
+		v.getset = make(map[string]*PropDescriptor)
+	}
+	desc, ok := v.getset[prop]
+	if !ok {
+		desc = &PropDescriptor{}
+		v.getset[prop] = desc
+	}
+	desc.Set = NewNativeFunc(fn)
+}
+
+// newError creates a JS Error object with name and message properties.
+func newError(name, message string) *Value {
+	return newObj(map[string]*Value{
+		"name":    newStr(name),
+		"message": newStr(message),
+		"stack":   newStr(name + ": " + message),
+	})
+}
 
 // Null is the JS null value.
 var Null = &Value{typ: TypeNull}
@@ -228,9 +292,43 @@ func (v *Value) toNum() float64 {
 }
 
 func (v *Value) getProp(key string) *Value {
-	if v.typ == TypeObject && v.object != nil {
+	// TypeFunc with object map — used for class constructors, module exports
+	if v.typ == TypeFunc && v.object != nil {
 		if val, ok := v.object[key]; ok {
 			return val
+		}
+	}
+	if v.typ == TypeObject {
+		// Check getters on this object and prototype chain, binding this to the original object
+		for cur := v; cur != nil; cur = cur.proto {
+			if cur.getset != nil {
+				if desc, ok := cur.getset[key]; ok && desc.Get != nil {
+					if desc.Get.native != nil {
+						return desc.Get.native(nil)
+					}
+					if desc.Get.str == "__arrow" {
+						scope := map[string]*Value{"this": v}
+						return callArrow(int(desc.Get.num), nil, scope)
+					}
+				}
+			}
+		}
+		if v.object != nil {
+			// Proxy get trap — intercept ALL property reads (known and unknown)
+			if _, isProxy := v.object["__proxy_get__"]; isProxy {
+				if key != "__proxy_get__" && key != "__proxy__" && key != "__has__" && key != "__delete__" && key != "__apply__" && key != "__constructor__" && key != "__constructors__" {
+					if getTrap, ok := v.object["__proxy_get__"]; ok && getTrap.typ == TypeFunc && getTrap.native != nil {
+						return getTrap.native([]*Value{newStr(key)})
+					}
+				}
+			}
+			if val, ok := v.object[key]; ok {
+				return val
+			}
+		}
+		// Check prototype chain
+		if v.proto != nil {
+			return v.proto.getProp(key)
 		}
 		return Undefined
 	}
@@ -253,6 +351,39 @@ func (v *Value) getProp(key string) *Value {
 			return newStr(string(v.str[idx]))
 		}
 		return Undefined
+	}
+	// Function properties (static methods, __class__, __prototype__, length, etc.)
+	if v.typ == TypeFunc {
+		if key == "length" {
+			// Return param count for arrow functions
+			if v.str == "__arrow" {
+				arrowRegistryMu.Lock()
+				af, ok := arrowRegistry[int(v.num)]
+				arrowRegistryMu.Unlock()
+				if ok {
+					count := 0
+					for _, p := range af.params {
+						if !strings.HasPrefix(p, "__rest__:") {
+							count++
+						}
+					}
+					return newNum(float64(count))
+				}
+			}
+			if v.fnParams != nil {
+				// Old-style function: params might be comma-separated in one string
+				if len(v.fnParams) == 1 && strings.Contains(v.fnParams[0], ",") {
+					return newNum(float64(len(strings.Split(v.fnParams[0], ","))))
+				}
+				return newNum(float64(len(v.fnParams)))
+			}
+			return newNum(0)
+		}
+		if v.object != nil {
+			if val, ok := v.object[key]; ok {
+				return val
+			}
+		}
 	}
 	return Undefined
 }

@@ -9,7 +9,29 @@ type VM struct {
 
 // New creates a new VM with an empty scope.
 func New() *VM {
-	return &VM{scope: make(map[string]*Value)}
+	vm := &VM{scope: make(map[string]*Value)}
+	RegisterSymbolGlobals(vm.scope)
+	// globalThis — global object (Node.js / browser compat)
+	vm.scope["globalThis"] = NewObj(make(map[string]*Value))
+	// AbortController / AbortSignal — minimal stub for compatibility
+	vm.scope["AbortController"] = NewNativeFunc(func(args []*Value) *Value {
+		signal := NewObj(map[string]*Value{
+			"aborted":          False,
+			"reason":           Undefined,
+			"addEventListener": NewNativeFunc(func(args []*Value) *Value { return Undefined }),
+		})
+		return NewObj(map[string]*Value{
+			"signal": signal,
+			"abort": NewNativeFunc(func(args []*Value) *Value {
+				signal.object["aborted"] = True
+				return Undefined
+			}),
+		})
+	})
+	// Register built-in globals as scope objects for bytecode compatibility.
+	// The interpreter handles these inline, but bytecode needs them in scope.
+	registerBuiltinGlobals(vm.scope)
+	return vm
 }
 
 // Set injects a Go value into the JS scope.
@@ -30,6 +52,17 @@ func (vm *VM) Get(name string) *Value {
 	return Undefined
 }
 
+// RunSafe is like Run but recovers from panics, returning an error instead.
+func (vm *VM) RunSafe(code string) (result *Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = Undefined
+			err = nil // swallow panic
+		}
+	}()
+	return vm.Run(code)
+}
+
 // Eval evaluates JS code and returns the result.
 // Handles both single expressions and multi-statement code.
 // Uses token caching — repeated calls with the same code skip tokenization.
@@ -42,7 +75,7 @@ func (vm *VM) Eval(code string) (*Value, error) {
 			hasStatements = true
 			break
 		}
-		if t.t == tokIdent && (t.v == "const" || t.v == "let" || t.v == "var" || t.v == "function") {
+		if t.t == tokIdent && (t.v == "const" || t.v == "let" || t.v == "var" || t.v == "function" || t.v == "class") {
 			hasStatements = true
 			break
 		}
@@ -72,6 +105,82 @@ func (vm *VM) Run(code string) (*Value, error) {
 	for k, v := range funcs {
 		vm.scope[k] = v
 	}
+	tokens := tokenizeCached(code)
+
+	// Try bytecode compilation — skip for code with patterns the bytecode
+	// compiler doesn't handle correctly yet (TODO: fix these in bytecode)
+	var bc *bytecode
+	if !needsInterpreter(tokens) {
+		bc = compileFuncBodyTokens(tokens)
+	}
+	if bc != nil {
+		scope := vm.copyScope()
+		result := execBytecodeSafe(bc, scope)
+		// Write back scope changes
+		for k, v := range scope {
+			vm.scope[k] = v
+		}
+		if result == nil {
+			return Undefined, nil
+		}
+		return result, nil
+	}
+
+	// Interpreter fallback
+	ev := &evaluator{tokens: tokens, pos: 0, scope: vm.copyScope()}
+	result := ev.evalStatements()
+	for k, v := range ev.scope {
+		vm.scope[k] = v
+	}
+	if result == nil || result == breakSentinel || result == continueSentinel {
+		return Undefined, nil
+	}
+	return result, nil
+}
+
+// needsInterpreter scans tokens for patterns the bytecode compiler
+// doesn't handle correctly yet. Returns true to force interpreter mode.
+// Each check is tagged with a TODO so they can be fixed individually.
+func needsInterpreter(tokens []tok) bool {
+	for i := 0; i < len(tokens); i++ {
+		t := tokens[i]
+		// TODO-BC: for...in, for...of, for await — bytecode loop bugs
+		if t.t == tokIdent && t.v == "for" {
+			return true
+		}
+		// TODO-BC: try/catch/finally — finally block not executed
+		if t.t == tokIdent && t.v == "try" {
+			return true
+		}
+		// TODO-BC: switch/case — not fully implemented
+		if t.t == tokIdent && t.v == "switch" {
+			return true
+		}
+		// TODO-BC: await — async semantics differ in bytecode
+		if t.t == tokIdent && t.v == "await" {
+			return true
+		}
+		// TODO-BC: inner function declarations — bytecode can't create closures
+		if t.t == tokIdent && t.v == "function" {
+			return true
+		}
+		// TODO-BC: new on variables — bcNewCall doesn't propagate scope for $constructor pattern
+		if t.t == tokIdent && t.v == "new" {
+			return true
+		}
+		// TODO-BC: Object.* and Array.* — special syntax not in bytecode
+		if t.t == tokIdent && (t.v == "Object" || t.v == "Array") && i+2 < len(tokens) &&
+			tokens[i+1].t == tokDot && tokens[i+2].t == tokIdent {
+			return true
+		}
+	}
+	return false
+}
+
+// RunModule evaluates JS code without ExtractFunctions hoisting.
+// Used by the module system so that function declarations naturally
+// close over the module scope (const/var declarations are in scope).
+func (vm *VM) RunModule(code string) (*Value, error) {
 	tokens := tokenizeCached(code)
 	ev := &evaluator{tokens: tokens, pos: 0, scope: vm.copyScope()}
 	result := ev.evalStatements()

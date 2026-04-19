@@ -1,0 +1,13 @@
+process.stderr.write("1: types...\n");
+require("@modelcontextprotocol/sdk/types.js");
+process.stderr.write("2: protocol...\n");
+require("@modelcontextprotocol/sdk/shared/protocol.js");
+process.stderr.write("3: zod-compat...\n");
+require("@modelcontextprotocol/sdk/server/zod-compat.js");
+process.stderr.write("4: ajv-provider...\n");
+require("@modelcontextprotocol/sdk/validation/ajv-provider.js");
+process.stderr.write("5: experimental tasks/server...\n");
+require("@modelcontextprotocol/sdk/experimental/tasks/server.js");
+process.stderr.write("6: experimental tasks/helpers...\n");
+require("@modelcontextprotocol/sdk/experimental/tasks/helpers.js");
+process.stderr.write("ALL OK\n");

@@ -117,6 +117,31 @@ func ExtractDefaultExport(source string) (body string, params string, err error)
 // returns them as Value objects with fnParams and fnBody.
 func ExtractFunctions(source string) map[string]*Value {
 	funcs := make(map[string]*Value)
+	// Only extract top-level function declarations (not inner/nested ones).
+	// Track brace depth to determine nesting level.
+	braceDepth := 0
+	inStr := byte(0)
+	for ci := 0; ci < len(source); ci++ {
+		ch := source[ci]
+		if inStr != 0 {
+			if ch == inStr && (ci == 0 || source[ci-1] != '\\') { inStr = 0 }
+			continue
+		}
+		if ch == '/' && ci+1 < len(source) && source[ci+1] == '/' {
+			for ci < len(source) && source[ci] != '\n' { ci++ }
+			continue
+		}
+		if ch == '/' && ci+1 < len(source) && source[ci+1] == '*' {
+			ci += 2
+			for ci+1 < len(source) { if source[ci] == '*' && source[ci+1] == '/' { ci++; break }; ci++ }
+			continue
+		}
+		if ch == '"' || ch == '\'' || ch == '`' { inStr = ch; continue }
+		if ch == '{' { braceDepth++ }
+		if ch == '}' { braceDepth-- }
+	}
+	_ = braceDepth // reset for actual extraction
+
 	i := 0
 	for i < len(source) {
 		idx := strings.Index(source[i:], "function ")
@@ -124,6 +149,35 @@ func ExtractFunctions(source string) map[string]*Value {
 			break
 		}
 		absIdx := i + idx
+
+		// Only extract top-level functions (not nested inside other functions)
+		depth := 0
+		inS := byte(0)
+		for ci := 0; ci < absIdx; ci++ {
+			ch := source[ci]
+			if inS != 0 {
+				if ch == inS && (ci == 0 || source[ci-1] != '\\') { inS = 0 }
+				continue
+			}
+			if ch == '/' && ci+1 < len(source) && source[ci+1] == '/' {
+				for ci < len(source) && source[ci] != '\n' { ci++ }
+				continue
+			}
+			if ch == '/' && ci+1 < len(source) && source[ci+1] == '*' {
+				ci += 2
+				for ci+1 < len(source) { if source[ci] == '*' && source[ci+1] == '/' { ci++; break }; ci++ }
+				continue
+			}
+			if ch == '"' || ch == '\'' || ch == '`' { inS = ch; continue }
+			if ch == '{' { depth++ }
+			if ch == '}' { depth-- }
+		}
+		if depth > 0 {
+			// Inside a function/block — skip this declaration
+			i = absIdx + 9
+			continue
+		}
+
 		prefix := source[max(0, absIdx-30):absIdx]
 		if strings.Contains(prefix, "export default") {
 			i = absIdx + 9
@@ -141,6 +195,7 @@ func ExtractFunctions(source string) map[string]*Value {
 			i = absIdx + 9
 			continue
 		}
+		_ = absIdx
 		rest = strings.TrimSpace(rest[nameEnd:])
 		if len(rest) == 0 || rest[0] != '(' {
 			i = absIdx + 9
@@ -159,6 +214,7 @@ func ExtractFunctions(source string) map[string]*Value {
 		}
 		braceEnd := findMatchingBrace(rest, 0)
 		if braceEnd < 0 {
+			_ = name
 			i = absIdx + 9
 			continue
 		}
@@ -172,6 +228,7 @@ func ExtractFunctions(source string) map[string]*Value {
 			fnParams: fnParams,
 			fnBody:   bodyStr,
 		}
+		_ = paramStr
 		i = absIdx + 9 + len(rest[:braceEnd+1])
 	}
 	return funcs
@@ -313,6 +370,25 @@ func findMatchingBrace(s string, start int) int {
 		if inStr != 0 {
 			if ch == inStr && (i == 0 || s[i-1] != '\\') {
 				inStr = 0
+			}
+			continue
+		}
+		// Skip line comments (// ... \n)
+		if ch == '/' && i+1 < len(s) && s[i+1] == '/' {
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		// Skip block comments (/* ... */)
+		if ch == '/' && i+1 < len(s) && s[i+1] == '*' {
+			i += 2
+			for i+1 < len(s) {
+				if s[i] == '*' && s[i+1] == '/' {
+					i++
+					break
+				}
+				i++
 			}
 			continue
 		}

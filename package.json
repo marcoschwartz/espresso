@@ -1,0 +1,27 @@
+{
+  "name": "espresso",
+  "version": "1.0.0",
+  "description": "",
+  "main": "test_ext.js",
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marcoschwartz/espresso.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/marcoschwartz/espresso/issues"
+  },
+  "homepage": "https://github.com/marcoschwartz/espresso#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  }
+}

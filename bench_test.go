@@ -133,3 +133,36 @@ func BenchmarkTokenizeCached(b *testing.B) {
 		tokenizeCached(code)
 	}
 }
+
+func BenchmarkBytecodeLogicalOps(b *testing.B) {
+	vm := New()
+	vm.Run(`function check(a, b) { return a > 0 && b > 0 || a === b; }`)
+	for i := 0; i < b.N; i++ {
+		vm.Eval(`check(5, 10)`)
+	}
+}
+
+func BenchmarkBytecodeWhileLoop(b *testing.B) {
+	vm := New()
+	vm.Run(`function sumTo(n) { var s = 0; var i = 0; while (i < n) { s = s + i; i++; } return s; }`)
+	for i := 0; i < b.N; i++ {
+		vm.Eval(`sumTo(100)`)
+	}
+}
+
+func BenchmarkBytecodeForLoop(b *testing.B) {
+	vm := New()
+	vm.Run(`function fact(n) { var r = 1; for (var i = 2; i <= n; i++) { r = r * i; } return r; }`)
+	for i := 0; i < b.N; i++ {
+		vm.Eval(`fact(20)`)
+	}
+}
+
+func BenchmarkBytecodePropAccess(b *testing.B) {
+	vm := New()
+	vm.Set("obj", map[string]interface{}{"x": 42, "nested": map[string]interface{}{"y": 100}})
+	vm.Run(`function getY(o) { return o.nested.y; }`)
+	for i := 0; i < b.N; i++ {
+		vm.Eval(`getY(obj)`)
+	}
+}

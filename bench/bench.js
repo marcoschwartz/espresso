@@ -121,3 +121,57 @@ for (let i = 1; i <= 10000; i++) {
   mathSum = mathSum + (i * i) % 997;
 }
 console.log("Math sum: " + mathSum);
+
+// 15. Promise.resolve + await
+const p1 = await Promise.resolve(42);
+const p2 = await Promise.resolve("hello");
+console.log("Await resolve: " + p1 + " " + p2);
+
+// 16. Promise chain
+let chainVal = 0;
+Promise.resolve(100)
+  .then((v) => v * 2)
+  .then((v) => v + 50)
+  .then((v) => { chainVal = v; });
+console.log("Promise chain: " + chainVal);
+
+// 17. Promise.all
+const allResults = await Promise.all([
+  Promise.resolve(10),
+  Promise.resolve(20),
+  Promise.resolve(30)
+]);
+const allSum = allResults[0] + allResults[1] + allResults[2];
+console.log("Promise.all sum: " + allSum);
+
+// 18. Async function pipeline
+const step1 = async () => {
+  const v = await Promise.resolve(5);
+  return v * 10;
+};
+const step2 = async () => {
+  const v = await step1();
+  return v + 7;
+};
+const pipeResult = await step2();
+console.log("Async pipeline: " + pipeResult);
+
+// 19. Promise constructor + error handling
+let caughtMsg = "";
+const failPromise = new Promise((resolve, reject) => {
+  reject("network error");
+});
+failPromise.catch((e) => { caughtMsg = e; });
+console.log("Promise catch: " + caughtMsg);
+
+// 20. Bulk async - resolve many promises
+const promises = [];
+for (let i = 0; i < 1000; i++) {
+  promises.push(Promise.resolve(i));
+}
+const bulk = await Promise.all(promises);
+let bulkSum = 0;
+for (let i = 0; i < bulk.length; i++) {
+  bulkSum = bulkSum + bulk[i];
+}
+console.log("Bulk promises: " + bulkSum);
