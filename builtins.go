@@ -8,6 +8,17 @@ import (
 	"strings"
 )
 
+// RegisterBuiltinGlobals is the exported entry point. Callers that build their
+// own espresso scope (SSR hosts, embedders) must install these so the bytecode
+// compiler can resolve `Number(...)`, `String(...)`, `JSON.stringify`, etc.
+// The interpreter has inline fast paths for some of these, but the bytecode VM
+// goes through ordinary scope lookup, so missing globals silently evaluate to
+// undefined — which was observed as SSR `Number(level)` returning undefined
+// and breaking tag selection in React-style components.
+func RegisterBuiltinGlobals(scope map[string]*Value) {
+	registerBuiltinGlobals(scope)
+}
+
 // registerBuiltinGlobals adds JS built-in objects (JSON, Math, Object, Array, etc.)
 // to the scope so the bytecode VM can access them via opLoadVar.
 // The interpreter handles these inline, but bytecode needs them in scope.
