@@ -3298,7 +3298,28 @@ func (e *evaluator) evalSingleStatement() *Value {
 		}
 		return val
 	}
-	// Not a return — evaluate and discard
+	// Control-flow statements can appear as the single body of an if/else/
+	// while/for — they are *statements*, not expressions. Route them through
+	// evalStatements (which has full for/while/if handlers) so the for-loop
+	// actually executes instead of being swallowed by e.expr() as a no-op.
+	if e.peek().t == tokIdent {
+		kw := e.peek().v
+		if kw == "for" || kw == "while" || kw == "if" || kw == "switch" || kw == "do" ||
+			kw == "const" || kw == "let" || kw == "var" || kw == "try" || kw == "throw" {
+			// Build a single-statement evaluator over the remaining tokens so we
+			// can reuse evalStatements' dispatch. It stops at the first
+			// end-of-statement since we drive a fresh evaluator on a sub-slice.
+			bodyStart := e.pos
+			e.skipSingleStatement()
+			bodyEnd := e.pos
+			bodyToks := make([]tok, bodyEnd-bodyStart+1)
+			copy(bodyToks, e.tokens[bodyStart:bodyEnd])
+			bodyToks[len(bodyToks)-1] = tok{t: tokEOF}
+			sub := &evaluator{tokens: bodyToks, pos: 0, scope: e.scope}
+			return sub.evalStatements()
+		}
+	}
+	// Not a return or statement keyword — evaluate and discard.
 	e.expr()
 	if e.peek().t == tokSemi {
 		e.advance()
