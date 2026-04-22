@@ -200,6 +200,16 @@ func (v *Value) Object() map[string]*Value {
 	return v.object
 }
 
+// FnParams returns the function's parameter specs as stored on the Value.
+// Each entry may be a comma-separated list (e.g. "a,b,c") or a destructuring
+// pattern ("{a, b}"). Returns nil for non-function values.
+func (v *Value) FnParams() []string {
+	if v == nil || v.typ != TypeFunc {
+		return nil
+	}
+	return v.fnParams
+}
+
 // Len returns the length of an array or string.
 func (v *Value) Len() int {
 	if v == nil {

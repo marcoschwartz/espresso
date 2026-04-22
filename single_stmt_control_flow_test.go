@@ -34,6 +34,29 @@ func TestIf_WithoutBraces_WrapsWhile(t *testing.T) {
 	}
 }
 
+// evalBlock's for..in handler used to ignore braceless single-statement
+// bodies (it only entered the loop if e.peek() was tokLBrace). That meant
+// `for (const k in obj) dst[k] = obj[k];` inside an `if (…) { … }` block
+// silently did nothing — the outer block path reached the for..in handler,
+// saw no `{`, and fell through.
+func TestForIn_BracelessBody_InsideBlock(t *testing.T) {
+	vm := New()
+	vm.Set("obj", map[string]interface{}{"a": 1.0, "b": 2.0, "c": 3.0})
+	r, _ := vm.Run(`
+		function copy() {
+			const dst = {};
+			if (true) {
+				for (const k in obj) dst[k] = obj[k];
+			}
+			return dst.a + "|" + dst.b + "|" + dst.c;
+		}
+		return copy();
+	`)
+	if r.String() != "1|2|3" {
+		t.Errorf("expected '1|2|3', got %q — braceless for..in body inside block was not executed", r.String())
+	}
+}
+
 // Regression: the exact shape that broke per-tenant theming in content-site.
 // `if (t.palette) for (const k in t.palette) palette[k] = t.palette[k];`
 // Was silently iterating zero times because the for was parsed as an

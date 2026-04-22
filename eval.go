@@ -6724,28 +6724,57 @@ func (e *evaluator) evalBlock() *Value {
 						e.advance() // skip "in"
 						obj := e.expr()
 						e.expect(tokRParen)
+						// Capture body tokens — braced or single statement.
+						var bodyTokens []tok
 						if e.peek().t == tokLBrace {
 							bs := e.pos
 							e.skipBalanced(tokLBrace, tokRBrace)
 							be := e.pos
-							if obj.typ == TypeObject && obj.object != nil {
-								var allKeys []string
-								for key := range obj.object {
-									allKeys = append(allKeys, key)
+							rawBody := e.tokens[bs:be]
+							if len(rawBody) >= 2 && rawBody[0].t == tokLBrace {
+								bodyTokens = make([]tok, len(rawBody)-2)
+								copy(bodyTokens, rawBody[1:len(rawBody)-1])
+							} else {
+								bodyTokens = make([]tok, len(rawBody))
+								copy(bodyTokens, rawBody)
+							}
+						} else {
+							// Single-statement body: `for (k in obj) stmt;`
+							stmtStart := e.pos
+							depth := 0
+							for e.pos < len(e.tokens) && e.tokens[e.pos].t != tokEOF {
+								tt := e.tokens[e.pos].t
+								if tt == tokLParen || tt == tokLBrack || tt == tokLBrace { depth++ }
+								if tt == tokRParen || tt == tokRBrack || tt == tokRBrace {
+									if depth == 0 { break }
+									depth--
 								}
-								for _, key := range allKeys {
-									e.scope[vn] = newStr(key)
-									bt := make([]tok, be-bs)
-									copy(bt, e.tokens[bs:be])
-									if len(bt) >= 2 && bt[0].t == tokLBrace {
-										bt = bt[1 : len(bt)-1]
-									}
-									bt = append(bt, tok{t: tokEOF})
-									bev := &evaluator{tokens: bt, pos: 0, scope: e.scope}
-									result := bev.evalStatements()
-									if result == breakSentinel { break }
-									if result != nil && result != continueSentinel { return result }
-								}
+								if tt == tokSemi && depth == 0 { e.pos++; break }
+								e.pos++
+							}
+							bodyTokens = make([]tok, e.pos-stmtStart)
+							copy(bodyTokens, e.tokens[stmtStart:e.pos])
+						}
+						bodyTokens = append(bodyTokens, tok{t: tokEOF})
+						if obj.typ == TypeObject && obj.object != nil {
+							var allKeys []string
+							for key := range obj.object {
+								allKeys = append(allKeys, key)
+							}
+							for _, key := range allKeys {
+								e.scope[vn] = newStr(key)
+								bev := &evaluator{tokens: bodyTokens, pos: 0, scope: e.scope}
+								result := bev.evalStatements()
+								if result == breakSentinel { break }
+								if result != nil && result != continueSentinel { return result }
+							}
+						} else if obj.typ == TypeArray {
+							for i := range obj.array {
+								e.scope[vn] = newStr(strconv.Itoa(i))
+								bev := &evaluator{tokens: bodyTokens, pos: 0, scope: e.scope}
+								result := bev.evalStatements()
+								if result == breakSentinel { break }
+								if result != nil && result != continueSentinel { return result }
 							}
 						}
 						continue
